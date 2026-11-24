@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { EngineAudio } from '../audio/EngineAudio';
 import { FollowCamera } from '../camera/FollowCamera';
 import { KeyboardInput } from '../input/KeyboardInput';
 import { GarageOverlay } from '../ui/GarageOverlay';
 import { HUD } from '../ui/HUD';
+import { MiniMap } from '../ui/MiniMap';
 import { CarController } from '../vehicle/CarController';
 import {
   getCarSpecById,
@@ -10,6 +12,7 @@ import {
   saveGarageSelection,
   type CarId,
 } from '../vehicle/CarSpecs';
+import { AtmosphereManager } from '../world/AtmosphereManager';
 import { buildWorld } from '../world/WorldBuilder';
 
 export class Game {
@@ -20,8 +23,13 @@ export class Game {
   private readonly input: KeyboardInput;
   private readonly car: CarController;
   private readonly followCamera: FollowCamera;
+  private readonly atmosphere: AtmosphereManager;
+  private readonly miniMap: MiniMap;
+  private readonly audio: EngineAudio;
   private readonly hud: HUD;
   private readonly garageOverlay: GarageOverlay;
+
+  private readonly carPos = new THREE.Vector3();
 
   private currentCarId: CarId;
   private currentPaintHex: string;
@@ -76,7 +84,7 @@ export class Game {
     dirLight.position.set(180, 260, 140);
     this.scene.add(dirLight);
 
-    // 5. World, Persisted Vehicle, Camera, Input, HUD & Garage
+    // 5. World, Persisted Vehicle, Camera, Atmosphere, Audio, Input, MiniMap, HUD & Garage
     const saved = loadGarageSelection();
     this.currentCarId = saved.carId;
     this.currentPaintHex = saved.paintHex;
@@ -85,10 +93,22 @@ export class Game {
     const world = buildWorld(this.scene);
     this.car = new CarController(initialSpec, this.currentPaintHex, world, this.scene);
     this.followCamera = new FollowCamera(this.camera, this.car, this.renderer.domElement);
+    this.atmosphere = new AtmosphereManager(
+      this.scene,
+      this.renderer,
+      hemiLight,
+      dirLight,
+      world,
+      this.car
+    );
+    this.miniMap = new MiniMap(container, world);
+    this.audio = new EngineAudio();
     this.input = new KeyboardInput();
 
-    this.hud = new HUD(container, () => {
-      this.setGarageOpen(true);
+    this.hud = new HUD(container, {
+      onOpenGarage: () => this.setGarageOpen(true),
+      onCycleTimeOfDay: () => this.handleCycleTimeOfDay(),
+      onToggleMute: () => this.handleToggleMute(),
     });
 
     this.garageOverlay = new GarageOverlay(
@@ -123,6 +143,16 @@ export class Game {
     this.rafId = requestAnimationFrame(this.loop);
   }
 
+  private handleCycleTimeOfDay(): void {
+    const next = this.atmosphere.cycleTimeOfDay();
+    this.hud.setTimeOfDay(next);
+  }
+
+  private handleToggleMute(): void {
+    const muted = this.audio.toggleMute();
+    this.hud.setMuted(muted);
+  }
+
   private setGarageOpen(open: boolean): void {
     if (this.garageOverlay.isOpen() === open) return;
     const width = this.container.clientWidth || window.innerWidth;
@@ -130,12 +160,16 @@ export class Game {
 
     if (open) {
       this.car.prepareForGarage();
+      this.audio.setPaused(true);
       this.hud.setVisible(false);
+      this.miniMap.setVisible(false);
       this.garageOverlay.setOpen(true);
       this.followCamera.setGarageMode(true, width, height);
     } else {
       this.garageOverlay.setOpen(false);
       this.hud.setVisible(true);
+      this.miniMap.setVisible(true);
+      this.audio.setPaused(false);
       this.followCamera.setGarageMode(false, width, height);
     }
   }
@@ -157,11 +191,19 @@ export class Game {
     }
 
     const actions = this.input.consumeActions();
+    if (actions.cycleTimeOfDay) {
+      this.handleCycleTimeOfDay();
+    }
+    if (actions.toggleMute) {
+      this.handleToggleMute();
+    }
     if (actions.toggleGarage) {
       this.setGarageOpen(!this.garageOverlay.isOpen());
     } else if (actions.closeGarage && this.garageOverlay.isOpen()) {
       this.setGarageOpen(false);
     }
+
+    this.atmosphere.update(dt);
 
     if (this.garageOverlay.isOpen()) {
       // Driving physics paused while inspecting vehicle in 3D Garage
@@ -184,6 +226,10 @@ export class Game {
     const inputState = this.input.getState();
     const telemetry = this.car.update(dt, inputState);
     this.followCamera.update(dt);
+
+    this.car.getPosition(this.carPos);
+    this.miniMap.update(this.carPos.x, this.carPos.z, this.car.getYaw());
+    this.audio.update(telemetry, inputState.throttle);
     this.hud.update(telemetry, this.followCamera.getMode(), this.currentFps);
 
     this.renderer.render(this.scene, this.camera);
@@ -192,6 +238,7 @@ export class Game {
   public dispose(): void {
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResize);
+    this.audio.dispose();
     this.followCamera.dispose();
     this.car.dispose();
     this.input.dispose();

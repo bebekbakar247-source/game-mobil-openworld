@@ -8,6 +8,8 @@ export interface CarRig {
   wheelMeshes: THREE.Object3D[];
   wheelRadius: number;
   paintMaterial: THREE.MeshStandardMaterial;
+  headlightMaterial: THREE.MeshStandardMaterial;
+  headlightBeam: THREE.Mesh;
   brakeLightMaterial: THREE.MeshStandardMaterial;
   reverseLightMaterial: THREE.MeshStandardMaterial;
   blobShadow: THREE.Mesh;
@@ -39,6 +41,36 @@ function createBlobShadowTexture(): THREE.CanvasTexture {
 
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 128, 128);
+
+  return new THREE.CanvasTexture(canvas);
+}
+
+function createHeadlightBeamTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.clearRect(0, 0, 128, 256);
+
+  const drawCone = (startX: number, endX: number): void => {
+    const grad = ctx.createLinearGradient(0, 256, 0, 12);
+    grad.addColorStop(0, 'rgba(255, 250, 220, 0.72)');
+    grad.addColorStop(0.45, 'rgba(255, 248, 210, 0.28)');
+    grad.addColorStop(1, 'rgba(255, 248, 210, 0)');
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(startX - 8, 256);
+    ctx.lineTo(startX + 8, 256);
+    ctx.lineTo(endX + 34, 12);
+    ctx.lineTo(endX - 34, 12);
+    ctx.closePath();
+    ctx.fill();
+  };
+
+  drawCone(42, 34);
+  drawCone(86, 94);
 
   return new THREE.CanvasTexture(canvas);
 }
@@ -297,7 +329,7 @@ export function createCarRig(carId: CarId, paintHex: string): CarRig {
     headlightMat: new THREE.MeshStandardMaterial({
       color: 0xfffbeb,
       emissive: 0xfef3c7,
-      emissiveIntensity: 1.4,
+      emissiveIntensity: 0.35,
       roughness: 0.2,
     }),
     brakeLightMaterial: new THREE.MeshStandardMaterial({
@@ -421,6 +453,20 @@ export function createCarRig(carId: CarId, paintHex: string): CarRig {
   rearRightWheel.position.set(-axleX, wheelRadius, -axleZ);
   root.add(rearRightWheel);
 
+  // Lightweight Ground Headlight Beam Cone (toggled via opacity at Sunset/Night)
+  const beamGeom = new THREE.PlaneGeometry(5.6, 15);
+  beamGeom.rotateX(-Math.PI / 2);
+  const beamMat = new THREE.MeshBasicMaterial({
+    map: createHeadlightBeamTexture(),
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const headlightBeam = new THREE.Mesh(beamGeom, beamMat);
+  headlightBeam.position.set(0, 0.12, 9.4);
+  root.add(headlightBeam);
+
   // Lightweight Blob Shadow
   const shadowGeom = new THREE.PlaneGeometry(shadowW, shadowL);
   shadowGeom.rotateX(-Math.PI / 2);
@@ -440,6 +486,8 @@ export function createCarRig(carId: CarId, paintHex: string): CarRig {
     wheelMeshes: [frontLeftWheel, frontRightWheel, rearLeftWheel, rearRightWheel],
     wheelRadius,
     paintMaterial: materials.paintMat,
+    headlightMaterial: materials.headlightMat,
+    headlightBeam,
     brakeLightMaterial: materials.brakeLightMaterial,
     reverseLightMaterial: materials.reverseLightMaterial,
     blobShadow,

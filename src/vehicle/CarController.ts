@@ -100,8 +100,11 @@ export class CarController {
   private readonly scene: THREE.Scene;
   private readonly world: WorldData;
   private readonly skidMarks: SkidMarkSystem;
+  private readonly headlightSpot: THREE.SpotLight;
+  private readonly headlightTarget: THREE.Object3D;
   private spec: CarSpec;
   private rig: CarRig;
+  private headlightLevel = 0;
 
   // Physics state
   private x = 0;
@@ -137,6 +140,15 @@ export class CarController {
     this.rig = createCarRig(spec.id, paintHex);
     scene.add(this.rig.root);
     scene.add(this.rig.blobShadow);
+
+    // Single lightweight forward SpotLight for Night headlights (always visible to avoid shader recompilation)
+    this.headlightSpot = new THREE.SpotLight(0xfff6dc, 0, 75, 0.58, 0.65, 1.35);
+    this.headlightSpot.castShadow = false;
+    this.headlightTarget = new THREE.Object3D();
+    this.headlightSpot.target = this.headlightTarget;
+    scene.add(this.headlightSpot);
+    scene.add(this.headlightTarget);
+
     this.reset(false);
   }
 
@@ -148,12 +160,20 @@ export class CarController {
     this.rig.paintMaterial.color.set(paintHex);
   }
 
+  public setHeadlightLevel(level: number): void {
+    this.headlightLevel = level;
+    this.headlightSpot.intensity = level * 4.5;
+    this.rig.headlightMaterial.emissiveIntensity = 0.35 + level * 2.45;
+    (this.rig.headlightBeam.material as THREE.MeshBasicMaterial).opacity = level * 0.32;
+  }
+
   public setVehicle(spec: CarSpec, paintHex: string): void {
     disposeCarRig(this.rig);
     this.spec = spec;
     this.rig = createCarRig(spec.id, paintHex);
     this.scene.add(this.rig.root);
     this.scene.add(this.rig.blobShadow);
+    this.setHeadlightLevel(this.headlightLevel);
 
     this.resolveWorldBounds();
     this.resolveRampSideWalls();
@@ -388,9 +408,16 @@ export class CarController {
     return Math.min(1, Math.hypot(this.vx, this.vz) / this.spec.physics.maxForwardSpeed);
   }
 
+  public getYaw(): number {
+    return this.yaw;
+  }
+
   public dispose(): void {
     disposeCarRig(this.rig);
     this.skidMarks.dispose();
+    this.headlightSpot.removeFromParent();
+    this.headlightTarget.removeFromParent();
+    this.headlightSpot.dispose();
   }
 
   private syncVisuals(
@@ -418,6 +445,12 @@ export class CarController {
 
     this.rig.brakeLightMaterial.emissiveIntensity = isBraking ? 2.2 : 0.45;
     this.rig.reverseLightMaterial.emissiveIntensity = isReversing ? 1.6 : 0.0;
+
+    // Update forward headlight SpotLight transform
+    const sinY = Math.sin(this.yaw);
+    const cosY = Math.cos(this.yaw);
+    this.headlightSpot.position.set(this.x + sinY * 1.8, this.y + 0.85, this.z + cosY * 1.8);
+    this.headlightTarget.position.set(this.x + sinY * 28, this.y + 0.1, this.z + cosY * 28);
 
     // Blob shadow stays flat on ground
     const airHeight = Math.max(0, this.y - groundHeight);

@@ -1,5 +1,12 @@
 import type { CameraMode } from '../camera/FollowCamera';
 import type { CarTelemetry } from '../vehicle/CarController';
+import type { TimeOfDay } from '../world/AtmosphereManager';
+
+export interface HUDCallbacks {
+  onOpenGarage: () => void;
+  onCycleTimeOfDay: () => void;
+  onToggleMute: () => void;
+}
 
 export class HUD {
   private readonly root: HTMLElement;
@@ -10,6 +17,10 @@ export class HUD {
   private readonly rpmFillEl: HTMLElement;
   private readonly fpsToggleBtn: HTMLButtonElement;
   private readonly fpsValueEl: HTMLElement;
+  private readonly timeBtn: HTMLButtonElement;
+  private readonly timeLabelEl: HTMLElement;
+  private readonly muteBtn: HTMLButtonElement;
+  private readonly muteLabelEl: HTMLElement;
 
   private fpsVisible = false;
   private lastSpeed = -1;
@@ -19,12 +30,22 @@ export class HUD {
   private lastRedline = false;
   private lastFpsText = '';
 
-  constructor(container: HTMLElement, onOpenGarage: () => void) {
+  constructor(container: HTMLElement, callbacks: HUDCallbacks) {
     this.root = document.createElement('div');
     this.root.className = 'hud-overlay';
 
     this.root.innerHTML = `
       <div class="hud-top-right">
+        <button type="button" class="hud-pill-btn time-btn" data-time="day" title="Cycle Time of Day (N)">
+          <span class="time-dot"></span>
+          <span class="time-label">DAY</span>
+          <kbd>N</kbd>
+        </button>
+        <button type="button" class="hud-pill-btn mute-btn" aria-pressed="false" title="Toggle Audio Mute (M)">
+          <span class="mute-dot"></span>
+          <span class="mute-label">SOUND</span>
+          <kbd>M</kbd>
+        </button>
         <button type="button" class="garage-btn" title="Open 3D Garage (G)">
           <span>GARAGE</span>
           <kbd>G</kbd>
@@ -42,6 +63,8 @@ export class HUD {
           <div class="control-row"><kbd>SPACE</kbd><span class="control-desc">Drift</span></div>
           <div class="control-row"><kbd>C</kbd><span class="control-desc">Camera</span></div>
           <div class="control-row"><kbd>G</kbd><span class="control-desc">Garage</span></div>
+          <div class="control-row"><kbd>N</kbd><span class="control-desc">Time</span></div>
+          <div class="control-row"><kbd>M</kbd><span class="control-desc">Audio</span></div>
           <div class="control-row"><kbd>R</kbd><span class="control-desc">Reset</span></div>
           <div class="control-row"><kbd>F</kbd><span class="control-desc">FPS</span></div>
         </div>
@@ -74,10 +97,17 @@ export class HUD {
     this.rpmFillEl = this.root.querySelector('.rpm-fill') as HTMLElement;
     this.fpsToggleBtn = this.root.querySelector('.fps-pill') as HTMLButtonElement;
     this.fpsValueEl = this.root.querySelector('.fps-value') as HTMLElement;
+    this.timeBtn = this.root.querySelector('.time-btn') as HTMLButtonElement;
+    this.timeLabelEl = this.root.querySelector('.time-label') as HTMLElement;
+    this.muteBtn = this.root.querySelector('.mute-btn') as HTMLButtonElement;
+    this.muteLabelEl = this.root.querySelector('.mute-label') as HTMLElement;
 
-    const garageBtn = this.root.querySelector('.garage-btn') as HTMLButtonElement;
-    garageBtn.addEventListener('click', onOpenGarage);
-
+    (this.root.querySelector('.garage-btn') as HTMLButtonElement).addEventListener(
+      'click',
+      callbacks.onOpenGarage
+    );
+    this.timeBtn.addEventListener('click', callbacks.onCycleTimeOfDay);
+    this.muteBtn.addEventListener('click', callbacks.onToggleMute);
     this.fpsToggleBtn.addEventListener('click', () => {
       this.toggleFps();
     });
@@ -85,6 +115,17 @@ export class HUD {
 
   public setVisible(visible: boolean): void {
     this.root.hidden = !visible;
+  }
+
+  public setTimeOfDay(mode: TimeOfDay): void {
+    this.timeBtn.dataset.time = mode;
+    this.timeLabelEl.textContent = mode.toUpperCase();
+  }
+
+  public setMuted(muted: boolean): void {
+    this.muteBtn.classList.toggle('is-muted', muted);
+    this.muteBtn.setAttribute('aria-pressed', String(muted));
+    this.muteLabelEl.textContent = muted ? 'MUTED' : 'SOUND';
   }
 
   public toggleFps(): void {

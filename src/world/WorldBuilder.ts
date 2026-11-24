@@ -36,6 +36,8 @@ export interface WorldData {
   ramps: RampDef[];
   bounds: AABB;
   spawn: { x: number; z: number; yaw: number };
+  streetLampBulbMaterial: THREE.MeshStandardMaterial;
+  buildingMaterial: THREE.MeshStandardMaterial;
   sampleGround: (x: number, z: number, currentY: number) => GroundSample;
 }
 
@@ -111,6 +113,43 @@ function createBuildingTexture(): THREE.CanvasTexture {
   tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
+  return tex;
+}
+
+function createBuildingEmissiveTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, 256, 512);
+
+  const cols = 6;
+  const rows = 14;
+  const padX = 12;
+  const padY = 10;
+  const cellW = (256 - padX * 2) / cols;
+  const cellH = (512 - padY * 2) / rows;
+  const rng = createSeededRng(77123);
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (rng() > 0.6) continue;
+      const wx = padX + c * cellW + 4;
+      const wy = padY + r * cellH + 5;
+      const ww = cellW - 8;
+      const wh = cellH - 10;
+
+      ctx.fillStyle = (r + c) % 3 === 0 ? '#ffe8a3' : '#ffd166';
+      ctx.fillRect(wx, wy, ww, wh);
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
@@ -514,12 +553,15 @@ export function buildWorld(scene: THREE.Scene): WorldData {
   }
 
   // Buildings InstancedMesh (NOTE: never set vertexColors: true with setColorAt)
+  const bMat = new THREE.MeshStandardMaterial({
+    map: createBuildingTexture(),
+    emissive: new THREE.Color(0xffd89b),
+    emissiveMap: createBuildingEmissiveTexture(),
+    emissiveIntensity: 0.0,
+    roughness: 0.72,
+  });
   if (buildingSpecs.length > 0) {
     const bGeom = new THREE.BoxGeometry(1, 1, 1);
-    const bMat = new THREE.MeshStandardMaterial({
-      map: createBuildingTexture(),
-      roughness: 0.72,
-    });
     const bInst = new THREE.InstancedMesh(bGeom, bMat, buildingSpecs.length);
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
@@ -607,7 +649,7 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     scene.add(crownInst);
   }
 
-  // 8. Instanced Street Lamps along Boulevards & Coastal Road
+  // 8. Instanced Street Lamps along Boulevards, Loop Highway & Coastal Road
   const lampPositions: Array<{ x: number; z: number; rotY: number }> = [];
   for (let p = -440; p <= 440; p += 88) {
     if (Math.abs(p) > 75) {
@@ -616,6 +658,17 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     }
     lampPositions.push({ x: 536, z: p, rotY: -Math.PI / 2 });
   }
+  for (let p = -440; p <= 440; p += 110) {
+    lampPositions.push({ x: p, z: -504, rotY: Math.PI });
+    lampPositions.push({ x: p, z: 504, rotY: 0 });
+    lampPositions.push({ x: -504, z: p, rotY: Math.PI / 2 });
+  }
+
+  const bulbMat = new THREE.MeshStandardMaterial({
+    color: 0xfef08a,
+    emissive: 0xfde047,
+    emissiveIntensity: 0.06,
+  });
 
   if (lampPositions.length > 0) {
     const poleGeom = new THREE.CylinderGeometry(0.18, 0.24, 7.5, 6);
@@ -623,11 +676,6 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     const poleInst = new THREE.InstancedMesh(poleGeom, poleMat, lampPositions.length);
 
     const bulbGeom = new THREE.BoxGeometry(1.1, 0.25, 0.65);
-    const bulbMat = new THREE.MeshStandardMaterial({
-      color: 0xfef08a,
-      emissive: 0xfde047,
-      emissiveIntensity: 0.85,
-    });
     const bulbInst = new THREE.InstancedMesh(bulbGeom, bulbMat, lampPositions.length);
 
     const dummy = new THREE.Object3D();
@@ -720,6 +768,8 @@ export function buildWorld(scene: THREE.Scene): WorldData {
     ramps,
     bounds,
     spawn: { x: -165, z: 0, yaw: Math.PI / 2 },
+    streetLampBulbMaterial: bulbMat,
+    buildingMaterial: bMat,
     sampleGround,
   };
 }
