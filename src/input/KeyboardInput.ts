@@ -5,6 +5,15 @@ export interface InputState {
   handbrake: boolean;
 }
 
+export function mergeInputStates(a: InputState, b: InputState): InputState {
+  return {
+    throttle: Math.max(a.throttle, b.throttle),
+    brake: Math.max(a.brake, b.brake),
+    steer: Math.max(-1, Math.min(1, a.steer + b.steer)),
+    handbrake: a.handbrake || b.handbrake,
+  };
+}
+
 export interface InputActions {
   cycleCamera: boolean;
   resetCar: boolean;

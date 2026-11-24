@@ -1,10 +1,16 @@
 import * as THREE from 'three';
 import { EngineAudio } from '../audio/EngineAudio';
 import { FollowCamera } from '../camera/FollowCamera';
-import { KeyboardInput } from '../input/KeyboardInput';
+import { KeyboardInput, mergeInputStates } from '../input/KeyboardInput';
+import { TouchControls } from '../input/TouchControls';
 import { GarageOverlay } from '../ui/GarageOverlay';
 import { HUD } from '../ui/HUD';
 import { MiniMap } from '../ui/MiniMap';
+import {
+  ModeSelector,
+  detectRecommendedMode,
+  type PlatformMode,
+} from '../ui/ModeSelector';
 import { CarController } from '../vehicle/CarController';
 import {
   getCarSpecById,
@@ -21,6 +27,7 @@ export class Game {
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly input: KeyboardInput;
+  private readonly touchControls: TouchControls;
   private readonly car: CarController;
   private readonly followCamera: FollowCamera;
   private readonly atmosphere: AtmosphereManager;
@@ -28,9 +35,11 @@ export class Game {
   private readonly audio: EngineAudio;
   private readonly hud: HUD;
   private readonly garageOverlay: GarageOverlay;
+  private readonly modeSelector: ModeSelector;
 
   private readonly carPos = new THREE.Vector3();
 
+  private platformMode: PlatformMode;
   private currentCarId: CarId;
   private currentPaintHex: string;
 
@@ -52,6 +61,8 @@ export class Game {
 
   constructor(container: HTMLElement) {
     this.container = container;
+    this.platformMode = detectRecommendedMode();
+    this.container.dataset.platform = this.platformMode;
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -104,11 +115,16 @@ export class Game {
     this.miniMap = new MiniMap(container, world);
     this.audio = new EngineAudio();
     this.input = new KeyboardInput();
+    this.touchControls = new TouchControls(container);
 
     this.hud = new HUD(container, {
       onOpenGarage: () => this.setGarageOpen(true),
       onCycleTimeOfDay: () => this.handleCycleTimeOfDay(),
       onToggleMute: () => this.handleToggleMute(),
+      onCycleCamera: () => this.handleCycleCamera(),
+      onResetCar: () => this.handleResetCar(),
+      onTogglePlatformMode: () =>
+        this.setPlatformMode(this.platformMode === 'pc' ? 'mobile' : 'pc'),
     });
 
     this.garageOverlay = new GarageOverlay(
@@ -135,12 +151,48 @@ export class Game {
       }
     );
 
+    // Initial state: pause vehicle movement & audio while start ModeSelector overlay is shown
+    this.audio.setPaused(true);
+    this.hud.setVisible(false);
+    this.miniMap.setVisible(false);
+    this.touchControls.setVisible(false);
+    this.setPlatformMode(this.platformMode);
+
+    this.modeSelector = new ModeSelector(container, {
+      onSelectMode: (mode) => {
+        this.setPlatformMode(mode);
+        this.hud.setVisible(true);
+        this.miniMap.setVisible(true);
+        this.touchControls.setVisible(true);
+        this.audio.setPaused(false);
+      },
+    });
+
     window.addEventListener('resize', this.onResize);
   }
 
   public start(): void {
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.loop);
+  }
+
+  private setPlatformMode(mode: PlatformMode): void {
+    this.platformMode = mode;
+    this.container.dataset.platform = mode;
+    this.touchControls.setActive(mode === 'mobile');
+    this.hud.setPlatformMode(mode);
+    this.garageOverlay.setPlatformMode(mode);
+  }
+
+  private handleCycleCamera(): void {
+    if (this.modeSelector.isOpen() || this.garageOverlay.isOpen()) return;
+    this.followCamera.cycleMode();
+  }
+
+  private handleResetCar(): void {
+    if (this.modeSelector.isOpen() || this.garageOverlay.isOpen()) return;
+    this.car.reset();
+    this.followCamera.snapToCar();
   }
 
   private handleCycleTimeOfDay(): void {
@@ -154,11 +206,13 @@ export class Game {
   }
 
   private setGarageOpen(open: boolean): void {
+    if (this.modeSelector.isOpen()) return;
     if (this.garageOverlay.isOpen() === open) return;
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
 
     if (open) {
+      this.touchControls.setVisible(false);
       this.car.prepareForGarage();
       this.audio.setPaused(true);
       this.hud.setVisible(false);
@@ -169,6 +223,7 @@ export class Game {
       this.garageOverlay.setOpen(false);
       this.hud.setVisible(true);
       this.miniMap.setVisible(true);
+      this.touchControls.setVisible(true);
       this.audio.setPaused(false);
       this.followCamera.setGarageMode(false, width, height);
     }
@@ -191,6 +246,17 @@ export class Game {
     }
 
     const actions = this.input.consumeActions();
+
+    // Pause vehicle movement & shortcut actions while initial ModeSelector overlay is open
+    if (this.modeSelector.isOpen()) {
+      this.atmosphere.update(dt);
+      this.followCamera.update(dt);
+      this.car.getPosition(this.carPos);
+      this.miniMap.update(this.carPos.x, this.carPos.z, this.car.getYaw());
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     if (actions.cycleTimeOfDay) {
       this.handleCycleTimeOfDay();
     }
@@ -213,17 +279,19 @@ export class Game {
     }
 
     if (actions.cycleCamera) {
-      this.followCamera.cycleMode();
+      this.handleCycleCamera();
     }
     if (actions.resetCar) {
-      this.car.reset();
-      this.followCamera.snapToCar();
+      this.handleResetCar();
     }
     if (actions.toggleFps) {
       this.hud.toggleFps();
     }
 
-    const inputState = this.input.getState();
+    const inputState = mergeInputStates(
+      this.input.getState(),
+      this.touchControls.getState()
+    );
     const telemetry = this.car.update(dt, inputState);
     this.followCamera.update(dt);
 
@@ -238,6 +306,9 @@ export class Game {
   public dispose(): void {
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResize);
+    this.modeSelector.dispose();
+    this.touchControls.dispose();
+    this.hud.dispose();
     this.audio.dispose();
     this.followCamera.dispose();
     this.car.dispose();

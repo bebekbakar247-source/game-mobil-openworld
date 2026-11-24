@@ -24,6 +24,8 @@ export class FollowCamera {
   private activePointerId = -1;
   private lastPointerX = 0;
   private lastPointerY = 0;
+  private readonly garageTouchPoints = new Map<number, { x: number; y: number }>();
+  private lastPinchDist = 0;
   private orbitYaw = 0;
   private orbitPitch = 0.28;
   private orbitDist = 7.2;
@@ -31,13 +33,29 @@ export class FollowCamera {
   private targetOrbitPitch = 0.28;
   private targetOrbitDist = 7.2;
 
+  private readonly onContextMenu = (e: Event): void => {
+    e.preventDefault();
+  };
+
   private readonly onPointerDown = (e: PointerEvent): void => {
-    if (!this.garageActive || e.button !== 0) return;
-    this.isDragging = true;
-    this.activePointerId = e.pointerId;
-    this.lastPointerX = e.clientX;
-    this.lastPointerY = e.clientY;
-    this.domElement.classList.add('is-dragging');
+    if (!this.garageActive) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    this.garageTouchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (this.garageTouchPoints.size === 2) {
+      this.isDragging = false;
+      this.activePointerId = -1;
+      this.lastPinchDist = this.computePinchDistance();
+      this.domElement.classList.remove('is-dragging');
+    } else if (this.garageTouchPoints.size === 1) {
+      this.isDragging = true;
+      this.activePointerId = e.pointerId;
+      this.lastPointerX = e.clientX;
+      this.lastPointerY = e.clientY;
+      this.domElement.classList.add('is-dragging');
+    }
+
     try {
       this.domElement.setPointerCapture(e.pointerId);
     } catch {
@@ -46,7 +64,27 @@ export class FollowCamera {
   };
 
   private readonly onPointerMove = (e: PointerEvent): void => {
-    if (!this.garageActive || !this.isDragging || e.pointerId !== this.activePointerId) return;
+    if (!this.garageActive) return;
+
+    if (this.garageTouchPoints.has(e.pointerId)) {
+      this.garageTouchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (this.garageTouchPoints.size >= 2) {
+      const dist = this.computePinchDistance();
+      if (this.lastPinchDist > 0 && dist > 0) {
+        const delta = this.lastPinchDist - dist;
+        this.targetOrbitDist = THREE.MathUtils.clamp(
+          this.targetOrbitDist + delta * 0.025,
+          4.8,
+          12.0
+        );
+      }
+      this.lastPinchDist = dist;
+      return;
+    }
+
+    if (!this.isDragging || e.pointerId !== this.activePointerId) return;
     const dx = e.clientX - this.lastPointerX;
     const dy = e.clientY - this.lastPointerY;
     this.lastPointerX = e.clientX;
@@ -57,10 +95,26 @@ export class FollowCamera {
   };
 
   private readonly onPointerUp = (e: PointerEvent): void => {
-    if (e.pointerId !== this.activePointerId) return;
-    this.isDragging = false;
-    this.activePointerId = -1;
-    this.domElement.classList.remove('is-dragging');
+    this.garageTouchPoints.delete(e.pointerId);
+    if (this.garageTouchPoints.size < 2) {
+      this.lastPinchDist = 0;
+    }
+
+    if (this.garageTouchPoints.size === 1) {
+      const [remainingId, pos] = this.garageTouchPoints.entries().next().value as [
+        number,
+        { x: number; y: number },
+      ];
+      this.isDragging = true;
+      this.activePointerId = remainingId;
+      this.lastPointerX = pos.x;
+      this.lastPointerY = pos.y;
+    } else if (e.pointerId === this.activePointerId || this.garageTouchPoints.size === 0) {
+      this.isDragging = false;
+      this.activePointerId = -1;
+      this.domElement.classList.remove('is-dragging');
+    }
+
     try {
       if (this.domElement.hasPointerCapture(e.pointerId)) {
         this.domElement.releasePointerCapture(e.pointerId);
@@ -90,6 +144,7 @@ export class FollowCamera {
     domElement.addEventListener('pointerup', this.onPointerUp);
     domElement.addEventListener('pointercancel', this.onPointerUp);
     domElement.addEventListener('wheel', this.onWheel, { passive: false });
+    domElement.addEventListener('contextmenu', this.onContextMenu);
 
     this.snapToCar();
   }
@@ -110,6 +165,8 @@ export class FollowCamera {
     this.garageActive = active;
     this.isDragging = false;
     this.activePointerId = -1;
+    this.garageTouchPoints.clear();
+    this.lastPinchDist = 0;
     this.domElement.classList.toggle('is-garage-orbit', active);
     this.domElement.classList.remove('is-dragging');
 
@@ -118,12 +175,15 @@ export class FollowCamera {
       this.car.getForwardVector(this.carForward);
       const carYaw = Math.atan2(this.carForward.x, this.carForward.z);
 
+      const isCompact = Math.min(viewportWidth, viewportHeight) < 540;
+      const baseDist = isCompact ? 8.2 : 7.2;
+
       this.orbitYaw = carYaw + Math.PI * 0.78;
       this.targetOrbitYaw = this.orbitYaw;
       this.orbitPitch = 0.28;
       this.targetOrbitPitch = 0.28;
-      this.orbitDist = 7.2;
-      this.targetOrbitDist = 7.2;
+      this.orbitDist = baseDist;
+      this.targetOrbitDist = baseDist;
 
       this.updateGarageViewOffset(viewportWidth, viewportHeight);
       this.camera.fov = 50;
@@ -207,15 +267,34 @@ export class FollowCamera {
     this.domElement.removeEventListener('pointerup', this.onPointerUp);
     this.domElement.removeEventListener('pointercancel', this.onPointerUp);
     this.domElement.removeEventListener('wheel', this.onWheel);
+    this.domElement.removeEventListener('contextmenu', this.onContextMenu);
+  }
+
+  private computePinchDistance(): number {
+    const pts = Array.from(this.garageTouchPoints.values());
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
   }
 
   private updateGarageViewOffset(viewportWidth: number, viewportHeight: number): void {
-    const offsetX = viewportWidth > 860 ? 180 : 0;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (viewportWidth <= 640 && viewportHeight > viewportWidth) {
+      // Portrait layout: garage panel docks at the bottom, shift car into upper half
+      offsetY = Math.round(viewportHeight * 0.2);
+    } else if (viewportWidth > 900) {
+      offsetX = 180;
+    } else if (viewportWidth > 540) {
+      // Mobile landscape: compact garage panel on the right, shift car to open left half
+      offsetX = Math.round(viewportWidth * 0.19);
+    }
+
     this.camera.setViewOffset(
       viewportWidth,
       viewportHeight,
       offsetX,
-      0,
+      offsetY,
       viewportWidth,
       viewportHeight
     );

@@ -4,6 +4,7 @@ import {
   getCarSpecById,
   type CarId,
 } from '../vehicle/CarSpecs';
+import type { PlatformMode } from './ModeSelector';
 
 export interface GarageOverlayCallbacks {
   onSelectCar: (carId: CarId) => void;
@@ -15,6 +16,8 @@ export class GarageOverlay {
   private readonly root: HTMLElement;
   private readonly carNameEl: HTMLElement;
   private readonly carTaglineEl: HTMLElement;
+  private readonly orbitHintEl: HTMLElement;
+  private readonly closeBtnEl: HTMLButtonElement;
   private readonly paintNameEl: HTMLElement;
   private readonly speedValEl: HTMLElement;
   private readonly speedBarEl: HTMLElement;
@@ -121,6 +124,8 @@ export class GarageOverlay {
 
     this.carNameEl = this.root.querySelector('.garage-showcase-title') as HTMLElement;
     this.carTaglineEl = this.root.querySelector('.garage-showcase-tagline') as HTMLElement;
+    this.orbitHintEl = this.root.querySelector('.garage-orbit-hint') as HTMLElement;
+    this.closeBtnEl = this.root.querySelector('.garage-close-btn') as HTMLButtonElement;
     this.paintNameEl = this.root.querySelector('.garage-paint-name') as HTMLElement;
     this.speedValEl = this.root.querySelector('.stat-top-speed-val') as HTMLElement;
     this.speedBarEl = this.root.querySelector('.stat-bar-speed') as HTMLElement;
@@ -154,6 +159,16 @@ export class GarageOverlay {
     this.open = open;
     this.root.hidden = !open;
     this.root.classList.toggle('is-open', open);
+  }
+
+  public setPlatformMode(mode: PlatformMode): void {
+    if (mode === 'mobile') {
+      this.orbitHintEl.textContent = 'Touch & drag to orbit 360° • Pinch to zoom';
+      this.closeBtnEl.textContent = 'CLOSE';
+    } else {
+      this.orbitHintEl.textContent = 'Drag mouse to orbit 360° • Scroll to zoom';
+      this.closeBtnEl.textContent = 'ESC';
+    }
   }
 
   public setSelection(carId: CarId, paintHex: string): void {
