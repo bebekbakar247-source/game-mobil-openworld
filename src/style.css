@@ -23,6 +23,14 @@ canvas {
   height: 100%;
 }
 
+canvas.is-garage-orbit {
+  cursor: grab;
+}
+
+canvas.is-garage-orbit.is-dragging {
+  cursor: grabbing;
+}
+
 .hud-overlay {
   position: fixed;
   inset: 0;
@@ -30,11 +38,48 @@ canvas {
   z-index: 10;
 }
 
-/* Top-Right FPS Pill */
+/* Top-Right Garage & FPS Pills */
 .hud-top-right {
   position: absolute;
   top: 18px;
   right: 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.garage-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(15, 23, 42, 0.68);
+  backdrop-filter: blur(8px);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.garage-btn:hover {
+  background: rgba(30, 41, 59, 0.85);
+  border-color: rgba(56, 189, 248, 0.8);
+  transform: translateY(-1px);
+}
+
+.garage-btn kbd {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.22);
+  color: #7dd3fc;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .fps-pill {
@@ -224,4 +269,297 @@ canvas {
 .rpm-fill.is-redline {
   background: linear-gradient(90deg, #f59e0b 0%, #ef4444 100%);
   filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.8));
+}
+
+/* =========================================================
+   PHASE 2: 3D GARAGE OVERLAY
+   ========================================================= */
+.garage-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.garage-showcase-banner {
+  position: absolute;
+  top: 24px;
+  left: 28px;
+  max-width: 420px;
+  padding: 16px 20px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(10px);
+  color: #f8fafc;
+}
+
+.garage-showcase-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #7dd3fc;
+  margin-bottom: 4px;
+}
+
+.garage-showcase-title {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.garage-showcase-tagline {
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(226, 232, 240, 0.82);
+  margin-bottom: 10px;
+}
+
+.garage-orbit-hint {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #cbd5e1;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.garage-panel {
+  pointer-events: auto;
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  bottom: 18px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(14px);
+  color: #f8fafc;
+  overflow-y: auto;
+}
+
+.garage-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.garage-panel-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #94a3b8;
+}
+
+.garage-panel-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.garage-close-btn {
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.garage-close-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.garage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.garage-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.garage-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+}
+
+.garage-paint-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.car-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.car-card {
+  width: 100%;
+  text-align: left;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(30, 41, 59, 0.52);
+  color: #f8fafc;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+
+.car-card:hover {
+  background: rgba(30, 41, 59, 0.85);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.car-card.is-selected {
+  background: rgba(14, 116, 144, 0.34);
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+.car-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.car-card-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.car-card-speed {
+  font-size: 11px;
+  font-weight: 700;
+  color: #7dd3fc;
+  font-variant-numeric: tabular-nums;
+}
+
+.car-card-tagline {
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(203, 213, 225, 0.78);
+}
+
+.stats-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.stat-top-speed-val {
+  color: #f8fafc;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8 0%, #34d399 100%);
+  transition: width 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+}
+
+.swatch-btn {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  background: var(--swatch-color);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.swatch-btn:hover {
+  transform: scale(1.08);
+}
+
+.swatch-btn.is-selected {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px #38bdf8;
+  transform: scale(1.06);
+}
+
+.garage-drive-btn {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.garage-drive-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.garage-drive-btn kbd {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(15, 23, 42, 0.3);
+  font-family: inherit;
+  font-size: 11px;
 }

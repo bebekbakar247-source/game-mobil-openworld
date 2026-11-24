@@ -9,6 +9,8 @@ export interface InputActions {
   cycleCamera: boolean;
   resetCar: boolean;
   toggleFps: boolean;
+  toggleGarage: boolean;
+  closeGarage: boolean;
 }
 
 const PREVENT_DEFAULT_CODES = new Set([
@@ -24,6 +26,8 @@ export class KeyboardInput {
   private cycleCameraQueued = false;
   private resetCarQueued = false;
   private toggleFpsQueued = false;
+  private toggleGarageQueued = false;
+  private closeGarageQueued = false;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (PREVENT_DEFAULT_CODES.has(e.code)) {
@@ -37,6 +41,10 @@ export class KeyboardInput {
         this.resetCarQueued = true;
       } else if (e.code === 'KeyF') {
         this.toggleFpsQueued = true;
+      } else if (e.code === 'KeyG') {
+        this.toggleGarageQueued = true;
+      } else if (e.code === 'Escape') {
+        this.closeGarageQueued = true;
       }
     }
 
@@ -81,10 +89,14 @@ export class KeyboardInput {
       cycleCamera: this.cycleCameraQueued,
       resetCar: this.resetCarQueued,
       toggleFps: this.toggleFpsQueued,
+      toggleGarage: this.toggleGarageQueued,
+      closeGarage: this.closeGarageQueued,
     };
     this.cycleCameraQueued = false;
     this.resetCarQueued = false;
     this.toggleFpsQueued = false;
+    this.toggleGarageQueued = false;
+    this.closeGarageQueued = false;
     return actions;
   }
 

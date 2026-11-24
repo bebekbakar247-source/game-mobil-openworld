@@ -2,6 +2,7 @@ import type { CameraMode } from '../camera/FollowCamera';
 import type { CarTelemetry } from '../vehicle/CarController';
 
 export class HUD {
+  private readonly root: HTMLElement;
   private readonly speedEl: HTMLElement;
   private readonly gearEl: HTMLElement;
   private readonly cameraEl: HTMLElement;
@@ -18,12 +19,16 @@ export class HUD {
   private lastRedline = false;
   private lastFpsText = '';
 
-  constructor(container: HTMLElement) {
-    const root = document.createElement('div');
-    root.className = 'hud-overlay';
+  constructor(container: HTMLElement, onOpenGarage: () => void) {
+    this.root = document.createElement('div');
+    this.root.className = 'hud-overlay';
 
-    root.innerHTML = `
+    this.root.innerHTML = `
       <div class="hud-top-right">
+        <button type="button" class="garage-btn" title="Open 3D Garage (G)">
+          <span>GARAGE</span>
+          <kbd>G</kbd>
+        </button>
         <button type="button" class="fps-pill" aria-pressed="false" title="Toggle FPS Counter (F)">
           <span class="fps-dot"></span>
           <span class="fps-label">FPS</span>
@@ -36,6 +41,7 @@ export class HUD {
           <div class="control-row"><kbd>W A S D</kbd><span>/</span><kbd>↑ ↓ ← →</kbd><span class="control-desc">Drive</span></div>
           <div class="control-row"><kbd>SPACE</kbd><span class="control-desc">Drift</span></div>
           <div class="control-row"><kbd>C</kbd><span class="control-desc">Camera</span></div>
+          <div class="control-row"><kbd>G</kbd><span class="control-desc">Garage</span></div>
           <div class="control-row"><kbd>R</kbd><span class="control-desc">Reset</span></div>
           <div class="control-row"><kbd>F</kbd><span class="control-desc">FPS</span></div>
         </div>
@@ -59,19 +65,26 @@ export class HUD {
       </div>
     `;
 
-    container.appendChild(root);
+    container.appendChild(this.root);
 
-    this.speedEl = root.querySelector('.speed-value') as HTMLElement;
-    this.gearEl = root.querySelector('.gear-pill') as HTMLElement;
-    this.cameraEl = root.querySelector('.badge-camera') as HTMLElement;
-    this.driftBadgeEl = root.querySelector('.badge-drift') as HTMLElement;
-    this.rpmFillEl = root.querySelector('.rpm-fill') as HTMLElement;
-    this.fpsToggleBtn = root.querySelector('.fps-pill') as HTMLButtonElement;
-    this.fpsValueEl = root.querySelector('.fps-value') as HTMLElement;
+    this.speedEl = this.root.querySelector('.speed-value') as HTMLElement;
+    this.gearEl = this.root.querySelector('.gear-pill') as HTMLElement;
+    this.cameraEl = this.root.querySelector('.badge-camera') as HTMLElement;
+    this.driftBadgeEl = this.root.querySelector('.badge-drift') as HTMLElement;
+    this.rpmFillEl = this.root.querySelector('.rpm-fill') as HTMLElement;
+    this.fpsToggleBtn = this.root.querySelector('.fps-pill') as HTMLButtonElement;
+    this.fpsValueEl = this.root.querySelector('.fps-value') as HTMLElement;
+
+    const garageBtn = this.root.querySelector('.garage-btn') as HTMLButtonElement;
+    garageBtn.addEventListener('click', onOpenGarage);
 
     this.fpsToggleBtn.addEventListener('click', () => {
       this.toggleFps();
     });
+  }
+
+  public setVisible(visible: boolean): void {
+    this.root.hidden = !visible;
   }
 
   public toggleFps(): void {

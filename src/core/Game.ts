@@ -1,9 +1,15 @@
 import * as THREE from 'three';
 import { FollowCamera } from '../camera/FollowCamera';
 import { KeyboardInput } from '../input/KeyboardInput';
+import { GarageOverlay } from '../ui/GarageOverlay';
 import { HUD } from '../ui/HUD';
 import { CarController } from '../vehicle/CarController';
-import { createCarRig } from '../vehicle/CarMeshFactory';
+import {
+  getCarSpecById,
+  loadGarageSelection,
+  saveGarageSelection,
+  type CarId,
+} from '../vehicle/CarSpecs';
 import { buildWorld } from '../world/WorldBuilder';
 
 export class Game {
@@ -15,6 +21,10 @@ export class Game {
   private readonly car: CarController;
   private readonly followCamera: FollowCamera;
   private readonly hud: HUD;
+  private readonly garageOverlay: GarageOverlay;
+
+  private currentCarId: CarId;
+  private currentPaintHex: string;
 
   private rafId = 0;
   private lastTime = 0;
@@ -29,10 +39,14 @@ export class Game {
     this.camera.updateProjectionMatrix();
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.setSize(width, height);
+    this.followCamera.onResize(width, height);
   };
 
   constructor(container: HTMLElement) {
     this.container = container;
+
+    const width = container.clientWidth || window.innerWidth;
+    const height = container.clientHeight || window.innerHeight;
 
     // 1. Lightweight Renderer (adaptive pixel ratio capped at 1.5)
     this.renderer = new THREE.WebGLRenderer({
@@ -40,10 +54,7 @@ export class Game {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.setSize(
-      container.clientWidth || window.innerWidth,
-      container.clientHeight || window.innerHeight
-    );
+    this.renderer.setSize(width, height);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -55,10 +66,7 @@ export class Game {
     this.scene.fog = new THREE.Fog(0xa8d5ea, 260, 760);
 
     // 3. Camera
-    const aspect =
-      (container.clientWidth || window.innerWidth) /
-      (container.clientHeight || window.innerHeight);
-    this.camera = new THREE.PerspectiveCamera(60, aspect, 0.25, 1100);
+    this.camera = new THREE.PerspectiveCamera(60, width / height, 0.25, 1100);
 
     // 4. Lightweight Lighting (Hemisphere + single Directional, blob shadow on car)
     const hemiLight = new THREE.HemisphereLight(0xdff4ff, 0x5c6b57, 1.15);
@@ -68,13 +76,44 @@ export class Game {
     dirLight.position.set(180, 260, 140);
     this.scene.add(dirLight);
 
-    // 5. World, Car, Camera, Input & HUD
+    // 5. World, Persisted Vehicle, Camera, Input, HUD & Garage
+    const saved = loadGarageSelection();
+    this.currentCarId = saved.carId;
+    this.currentPaintHex = saved.paintHex;
+    const initialSpec = getCarSpecById(this.currentCarId);
+
     const world = buildWorld(this.scene);
-    const carRig = createCarRig();
-    this.car = new CarController(carRig, world, this.scene);
-    this.followCamera = new FollowCamera(this.camera, this.car);
+    this.car = new CarController(initialSpec, this.currentPaintHex, world, this.scene);
+    this.followCamera = new FollowCamera(this.camera, this.car, this.renderer.domElement);
     this.input = new KeyboardInput();
-    this.hud = new HUD(container);
+
+    this.hud = new HUD(container, () => {
+      this.setGarageOpen(true);
+    });
+
+    this.garageOverlay = new GarageOverlay(
+      container,
+      this.currentCarId,
+      this.currentPaintHex,
+      {
+        onSelectCar: (carId) => {
+          if (carId === this.currentCarId) return;
+          this.currentCarId = carId;
+          this.car.setVehicle(getCarSpecById(carId), this.currentPaintHex);
+          saveGarageSelection(this.currentCarId, this.currentPaintHex);
+          this.garageOverlay.setSelection(this.currentCarId, this.currentPaintHex);
+        },
+        onSelectPaint: (paintHex) => {
+          this.currentPaintHex = paintHex;
+          this.car.setPaintColor(paintHex);
+          saveGarageSelection(this.currentCarId, this.currentPaintHex);
+          this.garageOverlay.setSelection(this.currentCarId, this.currentPaintHex);
+        },
+        onClose: () => {
+          this.setGarageOpen(false);
+        },
+      }
+    );
 
     window.addEventListener('resize', this.onResize);
   }
@@ -82,6 +121,23 @@ export class Game {
   public start(): void {
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.loop);
+  }
+
+  private setGarageOpen(open: boolean): void {
+    if (this.garageOverlay.isOpen() === open) return;
+    const width = this.container.clientWidth || window.innerWidth;
+    const height = this.container.clientHeight || window.innerHeight;
+
+    if (open) {
+      this.car.prepareForGarage();
+      this.hud.setVisible(false);
+      this.garageOverlay.setOpen(true);
+      this.followCamera.setGarageMode(true, width, height);
+    } else {
+      this.garageOverlay.setOpen(false);
+      this.hud.setVisible(true);
+      this.followCamera.setGarageMode(false, width, height);
+    }
   }
 
   private readonly loop = (now: number): void => {
@@ -101,6 +157,19 @@ export class Game {
     }
 
     const actions = this.input.consumeActions();
+    if (actions.toggleGarage) {
+      this.setGarageOpen(!this.garageOverlay.isOpen());
+    } else if (actions.closeGarage && this.garageOverlay.isOpen()) {
+      this.setGarageOpen(false);
+    }
+
+    if (this.garageOverlay.isOpen()) {
+      // Driving physics paused while inspecting vehicle in 3D Garage
+      this.followCamera.update(dt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     if (actions.cycleCamera) {
       this.followCamera.cycleMode();
     }
@@ -123,6 +192,8 @@ export class Game {
   public dispose(): void {
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResize);
+    this.followCamera.dispose();
+    this.car.dispose();
     this.input.dispose();
     this.renderer.dispose();
   }

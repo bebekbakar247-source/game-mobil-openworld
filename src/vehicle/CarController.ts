@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { InputState } from '../input/KeyboardInput';
 import type { AABB, RampDef, WorldData } from '../world/WorldBuilder';
-import type { CarRig } from './CarMeshFactory';
+import { createCarRig, disposeCarRig, type CarRig } from './CarMeshFactory';
+import type { CarSpec } from './CarSpecs';
 
 export interface CarTelemetry {
   speedKmh: number;
@@ -15,6 +16,7 @@ class SkidMarkSystem {
   private readonly maxQuads = 240;
   private readonly positions: Float32Array;
   private readonly geometry: THREE.BufferGeometry;
+  private readonly material: THREE.MeshBasicMaterial;
   private readonly mesh: THREE.Mesh;
   private head = 0;
 
@@ -24,7 +26,7 @@ class SkidMarkSystem {
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
 
-    const material = new THREE.MeshBasicMaterial({
+    this.material = new THREE.MeshBasicMaterial({
       color: 0x111317,
       transparent: true,
       opacity: 0.42,
@@ -32,7 +34,7 @@ class SkidMarkSystem {
       side: THREE.DoubleSide,
     });
 
-    this.mesh = new THREE.Mesh(this.geometry, material);
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = false;
     scene.add(this.mesh);
   }
@@ -86,12 +88,20 @@ class SkidMarkSystem {
     this.head = 0;
     (this.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
   }
+
+  public dispose(): void {
+    this.mesh.removeFromParent();
+    this.geometry.dispose();
+    this.material.dispose();
+  }
 }
 
 export class CarController {
-  private readonly rig: CarRig;
+  private readonly scene: THREE.Scene;
   private readonly world: WorldData;
   private readonly skidMarks: SkidMarkSystem;
+  private spec: CarSpec;
+  private rig: CarRig;
 
   // Physics state
   private x = 0;
@@ -118,16 +128,67 @@ export class CarController {
   private prevRearRx = 0;
   private prevRearRz = 0;
 
-  private readonly carRadius = 1.65;
-
-  constructor(rig: CarRig, world: WorldData, scene: THREE.Scene) {
-    this.rig = rig;
+  constructor(spec: CarSpec, paintHex: string, world: WorldData, scene: THREE.Scene) {
+    this.scene = scene;
+    this.spec = spec;
     this.world = world;
     this.skidMarks = new SkidMarkSystem(scene);
 
+    this.rig = createCarRig(spec.id, paintHex);
     scene.add(this.rig.root);
     scene.add(this.rig.blobShadow);
     this.reset(false);
+  }
+
+  public getSpec(): CarSpec {
+    return this.spec;
+  }
+
+  public setPaintColor(paintHex: string): void {
+    this.rig.paintMaterial.color.set(paintHex);
+  }
+
+  public setVehicle(spec: CarSpec, paintHex: string): void {
+    disposeCarRig(this.rig);
+    this.spec = spec;
+    this.rig = createCarRig(spec.id, paintHex);
+    this.scene.add(this.rig.root);
+    this.scene.add(this.rig.blobShadow);
+
+    this.resolveWorldBounds();
+    this.resolveRampSideWalls();
+    this.resolveBuildingCollisions();
+    this.resolveCircleCollisions();
+
+    const ground = this.world.sampleGround(this.x, this.z, this.y + 1.0);
+    this.y = ground.height;
+    this.vy = 0;
+    this.grounded = true;
+    this.hasPrevSkid = false;
+    this.syncVisuals(0, 0, 0, false, false, ground.height);
+  }
+
+  public prepareForGarage(): void {
+    this.vx = 0;
+    this.vy = 0;
+    this.vz = 0;
+    this.steerAngle = 0;
+    this.bodyRoll = 0;
+    this.bodyPitch = 0;
+    this.landingDip = 0;
+    this.grounded = true;
+    this.wasOnRamp = false;
+    this.lastRampSlope = 0;
+    this.hasPrevSkid = false;
+
+    this.resolveWorldBounds();
+    this.resolveRampSideWalls();
+    this.resolveBuildingCollisions();
+    this.resolveCircleCollisions();
+
+    const ground = this.world.sampleGround(this.x, this.z, this.y + 1.0);
+    this.y = ground.height;
+    this.syncVisuals(0, 0, 0, false, false, ground.height);
   }
 
   public reset(clearSkids = true): void {
@@ -153,6 +214,7 @@ export class CarController {
   }
 
   public update(dt: number, input: InputState): CarTelemetry {
+    const p = this.spec.physics;
     const sinYaw = Math.sin(this.yaw);
     const cosYaw = Math.cos(this.yaw);
 
@@ -162,7 +224,7 @@ export class CarController {
 
     // 1. Steering (speed-sensitive)
     const targetSteer = input.steer;
-    const steerLerp = 1 - Math.exp(-7.5 * dt);
+    const steerLerp = 1 - Math.exp(-p.steerResponse * dt);
     this.steerAngle += (targetSteer - this.steerAngle) * steerLerp;
 
     const absSpeed = Math.abs(forwardSpeed);
@@ -172,11 +234,11 @@ export class CarController {
 
     if (this.grounded && absSpeed > 0.35) {
       const speedFactor = Math.min(1, absSpeed / 7.5);
-      const highSpeedDamp = 1 / (1 + absSpeed * 0.014);
-      const driftYawBoost = input.handbrake ? 1.18 : 1.0;
+      const highSpeedDamp = 1 / (1 + absSpeed * p.highSpeedSteerDamp);
+      const driftYawBoost = input.handbrake ? p.driftYawBoost : 1.0;
       const reverseSign = forwardSpeed >= -0.1 ? 1 : -1;
       const turnRate =
-        this.steerAngle * 2.55 * speedFactor * highSpeedDamp * driftYawBoost * reverseSign;
+        this.steerAngle * p.turnRate * speedFactor * highSpeedDamp * driftYawBoost * reverseSign;
       this.yaw += turnRate * dt;
     }
 
@@ -185,21 +247,21 @@ export class CarController {
     const cYaw = Math.cos(this.yaw);
 
     // 2. Longitudinal acceleration / braking / reverse
-    const maxForward = 52; // ~187 km/h
-    const maxReverse = 16; // ~58 km/h
+    const maxForward = p.maxForwardSpeed;
+    const maxReverse = p.maxReverseSpeed;
     let longAccel = 0;
 
     if (this.grounded) {
       if (input.throttle > 0) {
         if (forwardSpeed < -1.0) {
-          longAccel = 46;
+          longAccel = p.brakeDecel;
         } else {
           const speedRatio = Math.max(0, forwardSpeed / maxForward);
-          longAccel = 30 * (1 - 0.55 * speedRatio * speedRatio);
+          longAccel = p.accel * (1 - p.accelFalloff * speedRatio * speedRatio);
         }
       } else if (input.brake > 0) {
         if (forwardSpeed > 1.0) {
-          longAccel = -46;
+          longAccel = -p.brakeDecel;
         } else {
           const revRatio = Math.max(0, -forwardSpeed / maxReverse);
           longAccel = -20 * (1 - revRatio * 0.6);
@@ -210,14 +272,14 @@ export class CarController {
       }
 
       if (input.handbrake) {
-        forwardSpeed *= Math.exp(-1.8 * dt);
+        forwardSpeed *= Math.exp(-p.handbrakeDrag * dt);
       }
 
       forwardSpeed += longAccel * dt;
       forwardSpeed = THREE.MathUtils.clamp(forwardSpeed, -maxReverse, maxForward);
 
       // 3. Lateral grip (lower when handbrake drifting)
-      const lateralGrip = input.handbrake ? 2.2 : 9.5;
+      const lateralGrip = input.handbrake ? p.driftGrip : p.normalGrip;
       lateralSpeed *= Math.exp(-lateralGrip * dt);
 
       this.vx = sYaw * forwardSpeed + cYaw * lateralSpeed;
@@ -235,9 +297,7 @@ export class CarController {
 
     // 5. Vertical physics & ramp launches
     const ground = this.world.sampleGround(this.x, this.z, this.y);
-    const rampSlope = ground.onRamp
-      ? ground.slopeX * sYaw + ground.slopeZ * cYaw
-      : 0;
+    const rampSlope = ground.onRamp ? ground.slopeX * sYaw + ground.slopeZ * cYaw : 0;
 
     if (this.grounded) {
       if (this.wasOnRamp && !ground.onRamp && forwardSpeed > 8 && this.lastRampSlope > 0.05) {
@@ -270,17 +330,23 @@ export class CarController {
     this.lastRampSlope = rampSlope;
 
     // 6. Skid marks
-    this.updateSkidMarks(dt, isDrifting || (this.grounded && input.brake > 0 && forwardSpeed > 18), ground.height);
+    this.updateSkidMarks(
+      dt,
+      isDrifting || (this.grounded && input.brake > 0 && forwardSpeed > 18),
+      ground.height
+    );
 
     // 7. Visual rig & lights
     const targetRoll = THREE.MathUtils.clamp(
-      -this.steerAngle * Math.min(1, absSpeed / 22) * 0.075 - lateralSpeed * 0.008,
-      -0.12,
-      0.12
+      (-this.steerAngle * Math.min(1, absSpeed / 22) * 0.075 - lateralSpeed * 0.008) *
+        p.rollMultiplier,
+      -0.18,
+      0.18
     );
     const targetPitch = this.grounded
-      ? -rampSlope - THREE.MathUtils.clamp(longAccel * 0.0022, -0.055, 0.055)
-      : THREE.MathUtils.clamp(-this.vy * 0.015, -0.22, 0.22);
+      ? -rampSlope -
+        THREE.MathUtils.clamp(longAccel * 0.0022 * p.pitchMultiplier, -0.09, 0.09)
+      : THREE.MathUtils.clamp(-this.vy * 0.015, -0.24, 0.24);
 
     this.syncVisuals(
       dt,
@@ -299,7 +365,7 @@ export class CarController {
 
     // 8. Telemetry
     const speedKmh = Math.round(Math.abs(forwardSpeed) * 3.6);
-    const { gear, rpm } = computeGearAndRpm(forwardSpeed);
+    const { gear, rpm } = computeGearAndRpm(forwardSpeed, maxForward);
 
     return {
       speedKmh,
@@ -319,7 +385,12 @@ export class CarController {
   }
 
   public getSpeedRatio(): number {
-    return Math.min(1, Math.hypot(this.vx, this.vz) / 52);
+    return Math.min(1, Math.hypot(this.vx, this.vz) / this.spec.physics.maxForwardSpeed);
+  }
+
+  public dispose(): void {
+    disposeCarRig(this.rig);
+    this.skidMarks.dispose();
   }
 
   private syncVisuals(
@@ -364,15 +435,16 @@ export class CarController {
       return;
     }
 
+    const p = this.spec.physics;
     const s = Math.sin(this.yaw);
     const c = Math.cos(this.yaw);
-    // Rear wheels at local (±0.94, -1.36)
-    const rearCenterX = this.x - s * 1.36;
-    const rearCenterZ = this.z - c * 1.36;
-    const lx = rearCenterX + c * 0.94;
-    const lz = rearCenterZ - s * 0.94;
-    const rx = rearCenterX - c * 0.94;
-    const rz = rearCenterZ + s * 0.94;
+    const rearOffset = Math.abs(p.rearAxleZ);
+    const rearCenterX = this.x - s * rearOffset;
+    const rearCenterZ = this.z - c * rearOffset;
+    const lx = rearCenterX + c * p.rearTrackHalfWidth;
+    const lz = rearCenterZ - s * p.rearTrackHalfWidth;
+    const rx = rearCenterX - c * p.rearTrackHalfWidth;
+    const rz = rearCenterZ + s * p.rearTrackHalfWidth;
 
     if (this.hasPrevSkid) {
       const dist = Math.hypot(lx - this.prevRearLx, lz - this.prevRearLz);
@@ -394,11 +466,12 @@ export class CarController {
   }
 
   private resolveWorldBounds(): void {
+    const r = this.spec.physics.collisionRadius;
     const b = this.world.bounds;
-    const minX = b.minX + this.carRadius;
-    const maxX = b.maxX - this.carRadius;
-    const minZ = b.minZ + this.carRadius;
-    const maxZ = b.maxZ - this.carRadius;
+    const minX = b.minX + r;
+    const maxX = b.maxX - r;
+    const minZ = b.minZ + r;
+    const maxZ = b.maxZ - r;
 
     if (this.x < minX) {
       this.x = minX;
@@ -418,6 +491,7 @@ export class CarController {
   }
 
   private resolveRampSideWalls(): void {
+    const carRadius = this.spec.physics.collisionRadius;
     for (let i = 0; i < this.world.ramps.length; i++) {
       const r: RampDef = this.world.ramps[i];
       const dx = this.x - r.x;
@@ -427,14 +501,13 @@ export class CarController {
       const lx = dx * cos - dz * sin;
       const lz = dx * sin + dz * cos;
 
-      const hw = r.width * 0.5 + this.carRadius * 0.65;
-      const hl = r.length * 0.5 + this.carRadius * 0.65;
+      const hw = r.width * 0.5 + carRadius * 0.65;
+      const hl = r.length * 0.5 + carRadius * 0.65;
 
       if (Math.abs(lx) < hw && Math.abs(lz) < hl) {
         const t = THREE.MathUtils.clamp((lz + r.length * 0.5) / r.length, 0, 1);
         const surfaceY = 0.06 + t * r.height;
         if (this.y < surfaceY - 1.1) {
-          // Push out along nearest edge in local space
           const penX = hw - Math.abs(lx);
           const penZ = hl - Math.abs(lz);
           let pushLx = 0;
@@ -450,7 +523,6 @@ export class CarController {
             pushLz = normLz * penZ;
           }
 
-          // Transform back to world space
           this.x += pushLx * cos + pushLz * sin;
           this.z += -pushLx * sin + pushLz * cos;
 
@@ -467,7 +539,7 @@ export class CarController {
   }
 
   private resolveBuildingCollisions(): void {
-    const r = this.carRadius;
+    const r = this.spec.physics.collisionRadius;
     const rSq = r * r;
     const colliders: AABB[] = this.world.colliders;
 
@@ -491,7 +563,6 @@ export class CarController {
         nz = dz / dist;
         push = r - dist;
       } else {
-        // Fallback if car center is inside AABB
         const dLeft = this.x - box.minX;
         const dRight = box.maxX - this.x;
         const dTop = this.z - box.minZ;
@@ -518,11 +589,12 @@ export class CarController {
   }
 
   private resolveCircleCollisions(): void {
+    const carRadius = this.spec.physics.collisionRadius;
     for (let i = 0; i < this.world.circleColliders.length; i++) {
       const c = this.world.circleColliders[i];
       const dx = this.x - c.x;
       const dz = this.z - c.z;
-      const minDist = c.radius + this.carRadius;
+      const minDist = c.radius + carRadius;
       const distSq = dx * dx + dz * dz;
 
       if (distSq < minDist * minDist && distSq > 1e-6) {
@@ -546,7 +618,10 @@ export class CarController {
   }
 }
 
-function computeGearAndRpm(forwardSpeed: number): { gear: string; rpm: number } {
+function computeGearAndRpm(
+  forwardSpeed: number,
+  maxForwardSpeed: number
+): { gear: string; rpm: number } {
   if (forwardSpeed < -0.5) {
     return {
       gear: 'R',
@@ -559,19 +634,19 @@ function computeGearAndRpm(forwardSpeed: number): { gear: string; rpm: number } 
     return { gear: 'N', rpm: 0.14 };
   }
 
-  const thresholds = [0, 11, 21, 32, 43, 55];
+  const fractions = [0, 0.21, 0.4, 0.61, 0.82, 1.05];
   let gearIdx = 1;
-  for (let i = 1; i < thresholds.length; i++) {
-    if (speed <= thresholds[i]) {
+  for (let i = 1; i < fractions.length; i++) {
+    if (speed <= fractions[i] * maxForwardSpeed) {
       gearIdx = i;
       break;
     }
     gearIdx = 5;
   }
 
-  const low = thresholds[gearIdx - 1];
-  const high = thresholds[gearIdx];
-  const t = THREE.MathUtils.clamp((speed - low) / (high - low), 0, 1);
+  const low = fractions[gearIdx - 1] * maxForwardSpeed;
+  const high = fractions[gearIdx] * maxForwardSpeed;
+  const t = THREE.MathUtils.clamp((speed - low) / Math.max(high - low, 0.1), 0, 1);
   const rpm = THREE.MathUtils.clamp(0.28 + t * 0.68, 0.2, 0.98);
 
   return { gear: String(gearIdx), rpm };
